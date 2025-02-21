@@ -5,9 +5,10 @@ from jedi.api import Completion
 from typing import List
 
 class AutoCompleter(QThread):
-    finished = pyqtSignal() # Add the finished signal
+    finished = pyqtSignal()
+
     def __init__(self, file_path: str, api: QsciAPIs):
-        super(AutoCompleter, self).__init__() # Corrected init
+        super().__init__()
         self.file_path = file_path
         self.script: Script = None
         self.api: QsciAPIs = api
@@ -22,7 +23,7 @@ class AutoCompleter(QThread):
             self.completions = self.script.complete(self.line, self.index)
             self.load_autocomplete(self.completions)
         except Exception as err:
-            print(f"AutoCompleter error: {err}") # More informative error
+            print(f"AutoCompleter error: {err}")
             self.finished.emit()
 
     def load_autocomplete(self, completions: List[Completion]):
