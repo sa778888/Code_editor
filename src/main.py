@@ -1,19 +1,25 @@
 import os
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.Qsci import *
 import sys
 from pathlib import Path
+from typing import Optional
+
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtGui import QFont, QIcon, QKeySequence, QPixmap
+from PyQt5.Qsci import QsciScintilla
+from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QFileDialog,
+                             QFrame, QHBoxLayout, QLabel, QLineEdit,
+                             QListWidget, QMessageBox, QMainWindow, QMenu,
+                             QSizePolicy, QSpacerItem, QSplitter, QStatusBar,
+                             QTabWidget, QVBoxLayout, QWidget)
+
 from editor import Editor
-from fuzzy_searcher import SearchItem, SearchWorker
 from file_manager import FileManager
-from typing import Optional, Callable
+from fuzzy_searcher import SearchItem, SearchWorker
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__() # Corrected super() call
-
+        super().__init__()
         self.side_bar_clr = "#282c34"
         self.init_ui()
         self.current_file: Optional[Path] = None
@@ -27,9 +33,8 @@ class MainWindow(QMainWindow):
             with open("./src/css/style.qss", "r") as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
-            print("Error: style.qss not found.") # Log to console
-            # Optionally, set a default stylesheet here.
-            self.setStyleSheet("background-color: #333;") #Example Default style
+            print("Error: style.qss not found.")
+            self.setStyleSheet("background-color: #333;")
 
         self.window_font = QFont("Fire Code")
         self.window_font.setPointSize(12)
@@ -78,15 +83,29 @@ class MainWindow(QMainWindow):
         copy_action.setShortcut("Ctrl+C")
         copy_action.triggered.connect(self.copy)
 
-    def get_editor(self, path: Optional[Path] = None, is_python_file=True) -> QsciScintilla:
-        editor = Editor(self, path=path, is_python_file=is_python_file)
+        view_menu = menu_bar.addMenu("View")
+
+        # Zoom In Action
+        zoom_in_action = QAction("Zoom In", self)
+        zoom_in_action.setShortcut(QKeySequence("Ctrl+="))  # Explicit shortcut
+        zoom_in_action.triggered.connect(self.zoom_in)
+        view_menu.addAction(zoom_in_action)
+
+        # Zoom Out Action
+        zoom_out_action = QAction("Zoom Out", self)
+        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))  # Explicit shortcut
+        zoom_out_action.triggered.connect(self.zoom_out)
+        view_menu.addAction(zoom_out_action)
+
+    def get_editor(self, path: Path = None, is_python_file=True) -> QsciScintilla:
+        editor = Editor(self, main_window=self, path=path, is_python_file=is_python_file)
         return editor
 
-    def is_binary(self, path: Path) -> bool:
+    def is_binary(self, path):
         try:
             with open(path, 'rb') as f:
                 return b'\0' in f.read(1024)
-        except IOError: # Catch file not found errors
+        except IOError:
             return True
 
     def set_new_tab(self, path: Path, is_new_file=False):
@@ -107,21 +126,20 @@ class MainWindow(QMainWindow):
             self.current_file = None
             return
 
+        # check if file already open
         for i in range(self.tab_view.count()):
             if self.tab_view.tabText(i) == path.name or self.tab_view.tabText(i) == "*"+path.name:
                 self.tab_view.setCurrentIndex(i)
                 self.current_file = path
                 return
 
+        # create new tab
+        editor = self.get_editor(path, path.suffix in {".py", ".pyw"})
         try:
             editor.setText(path.read_text(encoding="utf-8"))
         except UnicodeDecodeError:
             QMessageBox.warning(self, "Error", f"Could not decode file {path.name} with UTF-8.  Try opening in a different encoding.")
             return
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error opening {path.name}: {e}")
-            return
-
         self.tab_view.addTab(editor, path.name)
         self.setWindowTitle(f"{path.name} - {self.app_name}")
         self.current_file = path
@@ -199,6 +217,7 @@ class MainWindow(QMainWindow):
 
         folder_label = self.get_side_bar_label("./src/icons/folder-icon-blue.svg", "folder-icon")
         side_bar_layout.addWidget(folder_label)
+        side_bar_layout.addSpacerItem(QSpacerItem(10, 20, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
         search_label = self.get_side_bar_label("./src/icons/search-icon", "search-icon")
         side_bar_layout.addWidget(search_label)
@@ -248,7 +267,7 @@ class MainWindow(QMainWindow):
         search_input.textChanged.connect(
             lambda text: self.search_worker.update(
                 text,
-                self.file_manager.model.rootPath(), # Corrected
+                self.file_manager.model.rootPath(),
                 self.search_checkbox.isChecked()
             )
         )
@@ -292,7 +311,7 @@ class MainWindow(QMainWindow):
         editor.setCursorPosition(item.lineno, item.end)
         editor.setFocus()
 
-    def show_dialog(self, title: str, msg: str) -> int:
+    def show_dialog(self, title, msg) -> int:
         dialog = QMessageBox(self)
         dialog.setFont(self.font())
         dialog.font().setPointSize(14)
@@ -304,36 +323,55 @@ class MainWindow(QMainWindow):
         dialog.setIcon(QMessageBox.Warning)
         return dialog.exec_()
 
-    def close_tab(self, index: int):
-        editor: Editor = self.tab_view.widget(index)  # changed from currentWidget
+    def close_tab(self, index):
+        editor: Editor = self.tab_view.widget(index)
         if editor.current_file_changed:
             dialog = self.show_dialog(
                 "Close", f"Do you want to save the changes made to {self.current_file.name}?"
             )
             if dialog == QMessageBox.Yes:
-                self.save_file() # You need to save file before removing
-        self.tab_view.removeTab(index) # This should always happen
+                self.save_file()
+        self.tab_view.removeTab(index)
+
+    # def show_hide_tab(self, e, type_):
+    #     if type_ == "folder-icon":
+    #         if not (self.file_manager_frame in self.hsplit.children()):
+    #             self.hsplit.insertWidget(0, self.file_manager_frame)
+    #     elif type_ == "search-icon":
+    #         if not (self.search_frame in self.hsplit.children()):
+    #             self.hsplit.insertWidget(0, self.search_frame)
+
+    #     frame = self.hsplit.widget(0)
+    #     if frame.isHidden():
+    #         frame.show()
+    #     else:
+    #         frame.hide()
+
+    #     self.current_side_bar = type_
 
     def show_hide_tab(self, e, type_: str):
+        if self.current_side_bar == type_:  # If clicking the same button, toggle visibility
+            if self.hsplit.widget(0).isHidden():
+                self.hsplit.widget(0).show()
+            else:
+                self.hsplit.widget(0).hide()
+            return  # Exit function to prevent further execution
+
+        # Remove existing sidebar widget before switching
+        if self.hsplit.count() > 1:
+            self.hsplit.widget(0).setParent(None)
+
         if type_ == "folder-icon":
-            if not (self.file_manager_frame in self.hsplit.children()):
-                self.hsplit.insertWidget(0, self.file_manager_frame) # insert instead of replace
+            self.hsplit.insertWidget(0, self.file_manager_frame)
             self.search_frame.hide()
             self.file_manager_frame.show()
 
         elif type_ == "search-icon":
-            if not (self.search_frame in self.hsplit.children()):
-                self.hsplit.insertWidget(0, self.search_frame) # insert instead of replace
+            self.hsplit.insertWidget(0, self.search_frame)
             self.file_manager_frame.hide()
             self.search_frame.show()
 
         self.current_side_bar = type_
-
-        frame = self.hsplit.widget(0) # changed from children()[0]
-        if frame.isHidden():
-            frame.show()
-        else:
-            frame.hide()
 
     def new_file(self):
         self.set_new_tab(Path("untitled"), is_new_file=True)
@@ -341,7 +379,7 @@ class MainWindow(QMainWindow):
     def save_file(self):
         if self.current_file is None and self.tab_view.count() > 0:
             self.save_as()
-            return # add return so the rest doesnt execute
+            return
 
         editor = self.tab_view.currentWidget()
         try:
@@ -356,8 +394,8 @@ class MainWindow(QMainWindow):
         if editor is None:
             return
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd()) # added _
-        if not file_path: # same as file_path == ''
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())
+        if not file_path:
             self.statusBar().showMessage("Cancelled", 2000)
             return
 
@@ -375,15 +413,15 @@ class MainWindow(QMainWindow):
         ops = QFileDialog.Options()
         ops |= QFileDialog.DontUseNativeDialog
 
-        file_path, _ = QFileDialog.getOpenFileName(self, # added _
+        new_file, _ = QFileDialog.getOpenFileName(self,
             "Pick A File", "", "All Files (*);;Python Files (*.py)",
             options=ops)
 
-        if not file_path: # same as file_path == ''
+        if not new_file:
             self.statusBar().showMessage("Cancelled", 2000)
             return
 
-        f = Path(file_path)
+        f = Path(new_file)
         self.set_new_tab(f)
 
     def open_folder(self):
@@ -402,7 +440,17 @@ class MainWindow(QMainWindow):
         if editor is not None:
             editor.copy()
 
+    def zoom_in(self):
+        editor = self.tab_view.currentWidget()
+        if editor:
+            editor.zoomIn()  # QsciScintilla method
+
+    def zoom_out(self):
+        editor = self.tab_view.currentWidget()
+        if editor:
+            editor.zoomOut()   # QsciScintilla method
+
 if __name__ == '__main__':
-    app = QApplication(sys.argv) # added sys.argv
+    app = QApplication(sys.argv)
     window = MainWindow()
     sys.exit(app.exec_())

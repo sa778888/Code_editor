@@ -1,0 +1,5 @@
+PyQt5==5.15.11
+jedi==0.19.2
+parso==0.8.4
+PyQt5-sip==12.16.1
+QScintilla==2.14.1

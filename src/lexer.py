@@ -97,7 +97,7 @@ class NeutronLexer(QsciLexerCustom):
         }
 
     def _init_theme(self):
-        with open("/home/arshlaan/projext/pyqt-code-editor-yt/theme.json", "r") as f:
+        with open("theme.json", "r") as f:
             self.theme_json = json.load(f)
 
         colors = self.theme_json["theme"]["syntax"]
