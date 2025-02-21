@@ -65,7 +65,7 @@ class Editor(QsciScintilla):
             self.auto_completer.finished.connect(self.loaded_autocomplete)
             self.setLexer(self.pylexer)
         else:
-            self.setPaper(QColor("#282c34"))
+            self.setPaper(QColor("#1f1f1f"))
             self.setColor(QColor("#abb2bf"))
 
         self.setMarginType(0, QsciScintilla.NumberMargin)

@@ -1,36 +1,46 @@
 import os
 import sys
+import platform
+import re
 from pathlib import Path
 from typing import Optional
 
-from PyQt5.QtCore import QSize, Qt
-from PyQt5.QtGui import QFont, QIcon, QKeySequence, QPixmap
+from PyQt5.QtCore import QSize, Qt, QThread, pyqtSignal, QTimer, QEvent
+from PyQt5.QtGui import QFont, QIcon, QKeySequence, QPixmap, QKeyEvent, QTextCharFormat, QColor, QTextCursor
 from PyQt5.Qsci import QsciScintilla
 from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QFileDialog,
-                             QFrame, QHBoxLayout, QLabel, QLineEdit,
-                             QListWidget, QMessageBox, QMainWindow, QMenu,
-                             QSizePolicy, QSpacerItem, QSplitter, QStatusBar,
-                             QTabWidget, QVBoxLayout, QWidget)
+                                 QFrame, QHBoxLayout, QLabel, QLineEdit,
+                                 QListWidget, QMessageBox, QMainWindow, QMenu,
+                                 QSizePolicy, QSpacerItem, QSplitter, QStatusBar,
+                                 QTabWidget, QVBoxLayout, QWidget, QTextEdit)
+from PyQt5.QtCore import QProcess
 
 from editor import Editor
 from file_manager import FileManager
 from fuzzy_searcher import SearchItem, SearchWorker
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.side_bar_clr = "#282c34"
-        self.init_ui()
         self.current_file: Optional[Path] = None
         self.current_side_bar: Optional[str] = None
+        self.process = None
+        self.terminal = None  # Terminal widget
+        self.terminal_frame = None # Frame for Terminal Widget
+        self.vsplit = None # Vertical Splitter
+        self.current_command = "" # Store the current typed command
+
+        self.init_ui()
 
     def init_ui(self):
-        self.app_name = "PYQT EDITOR"
+        self.app_name = "Zrax"
         self.setWindowTitle(self.app_name)
+        self.setWindowIcon(QIcon("./src/icons/logo.jpeg"))
         self.resize(1300, 900)
+
         try:
-            with open("./src/css/style.qss", "r") as f:
+            with open("./src/css/style.qss", "r", encoding="utf-8") as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
             print("Error: style.qss not found.")
@@ -41,8 +51,9 @@ class MainWindow(QMainWindow):
         self.setFont(self.window_font)
 
         self.set_up_menu()
-        self.set_up_body()
+        self.set_up_body() # Crucial: Call set_up_body before any terminal-related actions
         self.set_up_status_bar()
+
         self.show()
 
     def set_up_status_bar(self):
@@ -70,11 +81,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        save_file = file_menu.addAction("Save")
+        save_file = QAction("Save", self)
+        file_menu.addAction(save_file) # corrected
         save_file.setShortcut("Ctrl+S")
         save_file.triggered.connect(self.save_file)
 
-        save_as = file_menu.addAction("Save As")
+        save_as = QAction("Save As", self)
+        file_menu.addAction(save_as) # corrected
         save_as.setShortcut("Ctrl+Shift+S")
         save_as.triggered.connect(self.save_as)
 
@@ -87,18 +100,23 @@ class MainWindow(QMainWindow):
 
         # Zoom In Action
         zoom_in_action = QAction("Zoom In", self)
-        zoom_in_action.setShortcut(QKeySequence("Ctrl+="))  # Explicit shortcut
+        zoom_in_action.setShortcut(QKeySequence("Ctrl+="))
         zoom_in_action.triggered.connect(self.zoom_in)
         view_menu.addAction(zoom_in_action)
 
         # Zoom Out Action
         zoom_out_action = QAction("Zoom Out", self)
-        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))  # Explicit shortcut
+        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
         zoom_out_action.triggered.connect(self.zoom_out)
         view_menu.addAction(zoom_out_action)
 
+        # Terminal Action
+        terminal_action = QAction("Terminal", self)
+        terminal_action.triggered.connect(self.toggle_terminal)
+        view_menu.addAction(terminal_action)
+
     def get_editor(self, path: Path = None, is_python_file=True) -> QsciScintilla:
-        editor = Editor(self, main_window=self, path=path, is_python_file=is_python_file)
+        editor = Editor(self, path=path, is_python_file=is_python_file)
         return editor
 
     def is_binary(self, path):
@@ -120,7 +138,7 @@ class MainWindow(QMainWindow):
 
         if is_new_file:
             self.tab_view.addTab(editor, "untitled")
-            self.setWindowTitle("untitled - " + self.app_name)
+            self.setWindowTitle(self.app_name)
             self.statusBar().showMessage("Opened untitled")
             self.tab_view.setCurrentIndex(self.tab_view.count() - 1)
             self.current_file = None
@@ -152,13 +170,12 @@ class MainWindow(QMainWindow):
     def set_cursor_arrow(self, e):
         self.setCursor(Qt.ArrowCursor)
 
-    def get_side_bar_label(self, path: str, name: str) -> QLabel:
+    def get_side_bar_label(self, path, name):
         label = QLabel()
         label.setPixmap(QPixmap(path).scaled(QSize(30, 30)))
         label.setAlignment(Qt.AlignmentFlag.AlignTop)
         label.setFont(self.window_font)
         label.mousePressEvent = lambda e: self.show_hide_tab(e, name)
-
         label.enterEvent = self.set_cursor_pointer
         label.leaveEvent = self.set_cursor_arrow
         return label
@@ -168,7 +185,7 @@ class MainWindow(QMainWindow):
         frame.setFrameShape(QFrame.NoFrame)
         frame.setFrameShadow(QFrame.Plain)
         frame.setContentsMargins(0, 0, 0, 0)
-        frame.setStyleSheet('''
+        frame.setStyleSheet("""
             QFrame {
                 background-color: #21252b;
                 border-radius: 5px;
@@ -179,7 +196,7 @@ class MainWindow(QMainWindow):
             QFrame:hover {
                 color: white;
             }
-        ''')
+        """)
         return frame
 
     def set_up_body(self):
@@ -206,9 +223,9 @@ class MainWindow(QMainWindow):
         self.side_bar = QFrame()
         self.side_bar.setFrameShape(QFrame.StyledPanel)
         self.side_bar.setFrameShadow(QFrame.Plain)
-        self.side_bar.setStyleSheet(f'''
+        self.side_bar.setStyleSheet(f"""
             background-color: {self.side_bar_clr};
-        ''')
+        """)
 
         side_bar_layout = QVBoxLayout()
         side_bar_layout.setContentsMargins(5, 10, 5, 0)
@@ -221,10 +238,18 @@ class MainWindow(QMainWindow):
 
         search_label = self.get_side_bar_label("./src/icons/search-icon", "search-icon")
         side_bar_layout.addWidget(search_label)
+        side_bar_layout.addSpacerItem(QSpacerItem(10, 20, QSizePolicy.Minimum, QSizePolicy.Fixed))  # Add spacing after search icon
+
+        # Add Terminal Icon to SideBar (using term.svg)
+        terminal_label = self.get_side_bar_label("./src/icons/term.svg", "terminal-icon")
+        side_bar_layout.addWidget(terminal_label)
+        side_bar_layout.addSpacerItem(QSpacerItem(10, 20, QSizePolicy.Minimum, QSizePolicy.Fixed))  # Add spacing after terminal icon
 
         self.side_bar.setLayout(side_bar_layout)
 
         self.hsplit = QSplitter(Qt.Horizontal)
+        self.vsplit = QSplitter(Qt.Vertical)  # Initialize vsplit here
+        self.vsplit.setOrientation(Qt.Vertical)  # Make sure it's vertical
 
         self.file_manager_frame = self.get_frame()
         self.file_manager_frame.setMaximumWidth(400)
@@ -259,22 +284,7 @@ class MainWindow(QMainWindow):
 
         self.search_checkbox = QCheckBox("Search in modules")
         self.search_checkbox.setFont(self.window_font)
-        self.search_checkbox.setStyleSheet("color: white; margin-bottom: 10px;")
-
-        self.search_worker = SearchWorker()
-        self.search_worker.finished.connect(self.search_finshed)
-
-        search_input.textChanged.connect(
-            lambda text: self.search_worker.update(
-                text,
-                self.file_manager.model.rootPath(),
-                self.search_checkbox.isChecked()
-            )
-        )
-
-        self.search_list_view = QListWidget()
-        self.search_list_view.setFont(QFont("FiraCode", 13))
-        self.search_list_view.setStyleSheet("""
+        self.search_checkbox.setStyleSheet("""
             QListWidget {
                 background-color: #21252b;
                 border-radius: 5px;
@@ -283,6 +293,7 @@ class MainWindow(QMainWindow):
                 color: #D3D3D3;
             }
         """)
+        self.search_list_view = QListWidget()
         self.search_list_view.itemClicked.connect(self.search_list_view_clicked)
 
         search_layout.addWidget(self.search_checkbox)
@@ -291,8 +302,30 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_list_view)
         self.search_frame.setLayout(search_layout)
 
+        #--------------------- Terminal Widget ---------------------
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(False)  # Allow editing for user input
+        terminal_font = QFont("Courier New", 10)  # Monospace font
+        self.terminal.setFont(terminal_font)
+        self.terminal.setStyleSheet("background-color: black; color: #00FF00;") #Set text color to green
+        self.terminal.setFocusPolicy(Qt.StrongFocus)  # Ensure it can receive focus
+
+        # Connect key press event to handle user input
+        self.terminal.keyPressEvent = self.terminal_keyPressEvent
+
+        self.terminal_frame = self.get_frame()  # Use the existing frame style
+        terminal_layout = QVBoxLayout()
+        terminal_layout.addWidget(self.terminal)
+        self.terminal_frame.setLayout(terminal_layout)
+        self.terminal_frame.hide() # Initially hidden
+
         self.hsplit.addWidget(self.file_manager_frame)
-        self.hsplit.addWidget(self.tab_view)
+        self.hsplit.addWidget(self.vsplit) # Add the vertical splitter to hsplit
+        self.vsplit.addWidget(self.tab_view) # Add tab view to the top
+        self.vsplit.addWidget(self.terminal_frame) # Add terminal to the bottom
+
+        # Set initial sizes for the vertical splitter (adjust as needed)
+        self.vsplit.setSizes([int(self.height() * 0.6), int(self.height() * 0.4)])
 
         body.addWidget(self.side_bar)
         body.addWidget(self.hsplit)
@@ -324,7 +357,7 @@ class MainWindow(QMainWindow):
         return dialog.exec_()
 
     def close_tab(self, index):
-        editor: Editor = self.tab_view.widget(index)
+        editor: Editor = self.tab_view.currentWidget()
         if editor.current_file_changed:
             dialog = self.show_dialog(
                 "Close", f"Do you want to save the changes made to {self.current_file.name}?"
@@ -333,43 +366,22 @@ class MainWindow(QMainWindow):
                 self.save_file()
         self.tab_view.removeTab(index)
 
-    # def show_hide_tab(self, e, type_):
-    #     if type_ == "folder-icon":
-    #         if not (self.file_manager_frame in self.hsplit.children()):
-    #             self.hsplit.insertWidget(0, self.file_manager_frame)
-    #     elif type_ == "search-icon":
-    #         if not (self.search_frame in self.hsplit.children()):
-    #             self.hsplit.insertWidget(0, self.search_frame)
-
-    #     frame = self.hsplit.widget(0)
-    #     if frame.isHidden():
-    #         frame.show()
-    #     else:
-    #         frame.hide()
-
-    #     self.current_side_bar = type_
-
-    def show_hide_tab(self, e, type_: str):
-        if self.current_side_bar == type_:  # If clicking the same button, toggle visibility
-            if self.hsplit.widget(0).isHidden():
-                self.hsplit.widget(0).show()
-            else:
-                self.hsplit.widget(0).hide()
-            return  # Exit function to prevent further execution
-
-        # Remove existing sidebar widget before switching
-        if self.hsplit.count() > 1:
-            self.hsplit.widget(0).setParent(None)
-
+    def show_hide_tab(self, e, type_):
         if type_ == "folder-icon":
-            self.hsplit.insertWidget(0, self.file_manager_frame)
-            self.search_frame.hide()
-            self.file_manager_frame.show()
-
+            if not (self.file_manager_frame in self.hsplit.children()):
+                self.hsplit.insertWidget(0, self.file_manager_frame)
         elif type_ == "search-icon":
-            self.hsplit.insertWidget(0, self.search_frame)
-            self.file_manager_frame.hide()
-            self.search_frame.show()
+            if not (self.search_frame in self.hsplit.children()):
+                self.hsplit.insertWidget(0, self.search_frame)
+        elif type_ == "terminal-icon":
+            self.toggle_terminal() # Directly toggle terminal
+            return
+
+        frame = self.hsplit.widget(0)
+        if frame.isHidden():
+            frame.show()
+        else:
+            frame.hide()
 
         self.current_side_bar = type_
 
@@ -443,12 +455,122 @@ class MainWindow(QMainWindow):
     def zoom_in(self):
         editor = self.tab_view.currentWidget()
         if editor:
-            editor.zoomIn()  # QsciScintilla method
+            editor.zoomIn()
 
     def zoom_out(self):
         editor = self.tab_view.currentWidget()
         if editor:
-            editor.zoomOut()   # QsciScintilla method
+            editor.zoomOut()
+
+    def toggle_terminal(self):
+        if self.terminal_frame is None:
+            print("Error: Terminal frame is not initialized.")
+            return
+
+        if self.terminal_frame.isHidden():
+            self.start_terminal()
+            self.terminal_frame.show()
+        else:
+            self.stop_terminal()
+            self.terminal_frame.hide()
+
+    def start_terminal(self):
+        if self.process is not None:
+            return
+
+        # Determine the shell based on the OS
+        if os.name == 'nt':
+            # Windows
+            shell = 'cmd.exe'
+            args = ['/k', 'echo.', '&', 'Zrax Terminal']  # Keep the window open and display a message
+        else:
+            # Linux, macOS, etc. (assuming bash is available)
+            shell = 'bash'
+            args = ['-i']  # Interactive mode
+
+        print(f"Starting terminal with shell: {shell} and args: {args}")
+
+        self.process = QProcess()
+        self.process.setProgram(shell)
+        self.process.setArguments(args)
+
+        self.process.readyReadStandardOutput.connect(self.handle_output)
+        self.process.readyReadStandardError.connect(self.handle_error)
+        self.process.started.connect(lambda: print("Process started"))
+        self.process.errorOccurred.connect(lambda error: print(f"Process error: {error}"))
+        self.process.finished.connect(self.terminal_process_finished)
+
+        self.process.start()
+        self.terminal.setFocus() # Set focus when terminal starts
+        QTimer.singleShot(0, self.terminal.setFocus) # Force focus
+
+    def stop_terminal(self):
+        if self.process is not None and self.process.state() == QProcess.Running:
+            self.process.kill()  # Terminate the process
+            self.process.waitForFinished(1000)  # Wait for it to finish
+            self.process = None  # Reset the process
+        print("Terminal stopped")
+
+    def handle_output(self):
+        data = self.process.readAllStandardOutput().data()
+        encoding = sys.stdout.encoding or 'utf-8'  # Use system encoding or default to utf-8
+        try:
+            text = data.decode(encoding, errors='replace')  # Decode with error replacement
+
+            # Remove HTML-like font tags and ANSI escape codes
+            clean_text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+            clean_text = re.sub(r'\x1b\[[0-9;]*m', '', clean_text)  # Remove ANSI escape codes
+
+            self.terminal.insertPlainText(clean_text)
+            self.terminal.ensureCursorVisible()
+        except Exception as e:
+            print(f"Error decoding output: {e}")
+
+    def handle_error(self):
+        data = self.process.readAllStandardError().data()
+        encoding = sys.stderr.encoding or 'utf-8'  # Use system encoding or default to utf-8
+        try:
+            text = data.decode(encoding, errors='replace')  # Decode with error replacement
+
+            # Remove HTML-like font tags and ANSI escape codes
+            clean_text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+            clean_text = re.sub(r'\x1b[[0-9;]*m', '', clean_text)  # Remove ANSI escape codes
+
+            self.terminal.insertPlainText(clean_text)  # no red for now
+            self.terminal.ensureCursorVisible()
+        except Exception as e:
+            print(f"Error decoding error output: {e}")
+
+    def terminal_process_finished(self, exit_code, exit_status):
+        print(f"Terminal process finished with code {exit_code} and status {exit_status}")
+        self.process = None
+
+    def terminal_keyPressEvent(self, event: QKeyEvent):
+        if self.process and self.process.state() == QProcess.Running:
+            if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+                self.process.write(b'\n')
+            elif event.key() == Qt.Key_Backspace:
+                # Only send backspace character to the process
+                self.process.write(b'\x08')
+            elif event.key() == Qt.Key_Delete:
+                self.process.write(b'\x7f')
+            elif event.key() == Qt.Key_Tab:
+                self.process.write(b'\t')
+            elif event.key() == Qt.Key_Up:  # Up arrow key
+                self.process.write(b'\x1b[A')  # ANSI escape code for up arrow
+            elif event.key() == Qt.Key_Down:  # Down arrow key
+                self.process.write(b'\x1b[B')  # ANSI escape code for down arrow
+            elif event.key() == Qt.Key_Left:  # Left arrow key
+                self.process.write(b'\x1b[D')  # ANSI escape code for left arrow
+            elif event.key() == Qt.Key_Right:  # Right arrow key
+                self.process.write(b'\x1b[C')  # ANSI escape code for right arrow
+            else:
+                text = event.text()
+                self.process.write(text.encode())
+
+            event.accept()
+        else:
+            QTextEdit.keyPressEvent(self.terminal, event)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -35,7 +35,7 @@ class NeutronLexer(QsciLexerCustom):
         if defaults is None:
             defaults: DefaultConfig = {}
             defaults["color"] = "#abb2bf"
-            defaults["paper"] = "#282c34"
+            defaults["paper"] = "#1f1f1f"
             defaults["font"] = ("Consolas", 14)
 
 
