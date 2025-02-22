@@ -367,22 +367,29 @@ class MainWindow(QMainWindow):
         self.tab_view.removeTab(index)
 
     def show_hide_tab(self, e, type_):
-        if type_ == "folder-icon":
-            if not (self.file_manager_frame in self.hsplit.children()):
-                self.hsplit.insertWidget(0, self.file_manager_frame)
-        elif type_ == "search-icon":
-            if not (self.search_frame in self.hsplit.children()):
-                self.hsplit.insertWidget(0, self.search_frame)
-        elif type_ == "terminal-icon":
-            self.toggle_terminal() # Directly toggle terminal
+        # Dictionary mapping sidebar icons to their respective frames
+        tab_mapping = {
+            "folder-icon": self.file_manager_frame,
+            "search-icon": self.search_frame,
+        }
+
+        if type_ == "terminal-icon":
+            self.toggle_terminal()  # Toggle terminal separately
             return
 
-        frame = self.hsplit.widget(0)
-        if frame.isHidden():
-            frame.show()
-        else:
-            frame.hide()
+        selected_frame = tab_mapping.get(type_)
 
+        if not selected_frame:
+            return
+
+        # Check if the frame is already in the splitter; if not, insert it
+        if selected_frame not in self.hsplit.children():
+            self.hsplit.insertWidget(0, selected_frame)
+
+        # Toggle visibility without affecting other sidebars
+        selected_frame.setVisible(not selected_frame.isVisible())
+
+        # Update current active sidebar tracking
         self.current_side_bar = type_
 
     def new_file(self):
@@ -480,9 +487,9 @@ class MainWindow(QMainWindow):
 
         # Determine the shell based on the OS
         if os.name == 'nt':
-            # Windows
-            shell = 'cmd.exe'
-            args = ['/k', 'echo.', '&', 'Zrax Terminal']  # Keep the window open and display a message
+            # Use PowerShell instead of CMD
+            shell = 'powershell.exe'
+            args = ['-NoExit', '-Command', f'echo ZenPy Terminal; cd {os.getcwd()}']  # Keep the window open and display a message
         else:
             # Linux, macOS, etc. (assuming bash is available)
             shell = 'bash'
@@ -500,9 +507,13 @@ class MainWindow(QMainWindow):
         self.process.errorOccurred.connect(lambda error: print(f"Process error: {error}"))
         self.process.finished.connect(self.terminal_process_finished)
 
+        self.process.setWorkingDirectory(os.getcwd())  # Set the working directory
         self.process.start()
-        self.terminal.setFocus() # Set focus when terminal starts
-        QTimer.singleShot(0, self.terminal.setFocus) # Force focus
+        self.terminal.setFocus()
+        QTimer.singleShot(0, self.terminal.setFocus)
+        # self.process.start()
+        # self.terminal.setFocus() # Set focus when terminal starts
+        # QTimer.singleShot(0, self.terminal.setFocus) # Force focus
 
     def stop_terminal(self):
         if self.process is not None and self.process.state() == QProcess.Running:
